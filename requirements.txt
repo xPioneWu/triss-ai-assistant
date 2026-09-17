@@ -1,0 +1,11 @@
+anthropic
+speechrecognition
+pyaudio
+edge-tts
+pygame
+requests
+python-dotenv
+spotipy
+openai-whisper
+soundfile
+numpy
