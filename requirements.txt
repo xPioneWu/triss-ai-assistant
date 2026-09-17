@@ -1,11 +1,24 @@
-anthropic
+# Google Gemini Yapay Zeka Modeli
+google-generativeai
+
+# Ses Tanıma ve İşleme
 speechrecognition
 pyaudio
-edge-tts
-pygame
-requests
-python-dotenv
-spotipy
 openai-whisper
 soundfile
 numpy
+
+# Metin-Ses Dönüştürme (TTS) ve Oynatma
+edge-tts
+pygame
+
+# Yardımcı Kütüphaneler ve Ortam Değişkenleri
+requests
+python-dotenv
+
+# Müzik Kontrolü
+spotipy
+
+# Masaüstü otomasyonu (fare ve klavye hareketleri, ekran kontrolü)
+pyautogui
+

@@ -2,7 +2,7 @@ import json
 import os
 import logging
 import speech_recognition as sr
-from anthropic import Anthropic
+import ollama
 
 from voice_output import speak, speak_sync
 from skills.weather import get_weather
@@ -11,6 +11,7 @@ from skills.system import SystemController
 
 log = logging.getLogger("Triss.Core")
 
+OLLAMA_MODEL  = "llama3.2"
 WAKE_WORD_ON  = ["gunaydın triss", "gunaydin triss", "merhaba triss"]
 WAKE_WORD_OFF = ["iyi geceler triss", "iyi geceler", "hosca kal triss"]
 
@@ -39,10 +40,7 @@ Aksi halde normal, sicak ve kisa bir Turkce cevap ver."""
 
 class TrissAssistant:
     def __init__(self):
-        self.provider = None
-        self.client = None
-        self.gemini_model = None
-        self._init_llm()
+        self._check_ollama()
         self.music   = MusicController()
         self.system  = SystemController()
         self.history = self._load_history()
@@ -54,25 +52,15 @@ class TrissAssistant:
         self.recognizer.dynamic_energy_threshold = True
         self.recognizer.pause_threshold          = 0.8
 
-        log.info(f"Triss Core baslatildi. LLM provider: {self.provider}")
+        log.info(f"Triss Core baslatildi. LLM modeli: {OLLAMA_MODEL}")
 
-    def _init_llm(self):
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-
-        if anthropic_key:
-            self.provider = "anthropic"
-            self.client = Anthropic(api_key=anthropic_key)
-            return
-
-        if gemini_key:
-            import google.generativeai as genai
-            self.provider = "gemini"
-            genai.configure(api_key=gemini_key)
-            self.gemini_model = genai.GenerativeModel("gemini-2.5-flash")
-            return
-
-        raise ValueError("LLM API anahtari bulunamadi! .env dosyasina ANTHROPIC_API_KEY veya GEMINI_API_KEY ekleyin.")
+    def _check_ollama(self):
+        try:
+            ollama.list()
+            log.info(f"Ollama baglantisi basarili. Model: {OLLAMA_MODEL}")
+        except Exception as e:
+            log.error(f"Ollama servisine baglanilamadi: {e}")
+            raise RuntimeError(f"Ollama servisine baglanilamadi! Lutfen Ollama'nin calistigindan emin olun: {e}")
 
     def listen_loop(self):
         with sr.Microphone() as source:
@@ -132,7 +120,7 @@ class TrissAssistant:
         try:
             reply = self._generate_reply()
         except Exception as e:
-            log.error(f"LLM API hatasi ({self.provider}): {e}")
+            log.error(f"Ollama hatasi: {e}")
             speak_sync("Uzgunum, su an dusünemiyorum.")
             return
 
@@ -145,27 +133,15 @@ class TrissAssistant:
             speak(reply)
 
     def _generate_reply(self) -> str:
-        if self.provider == "anthropic":
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=512,
-                system=SYSTEM_PROMPT,
-                messages=self.history,
-            )
-            return response.content[0].text.strip()
-
-        if self.provider == "gemini":
-            history_lines = [SYSTEM_PROMPT, "", "Konusma gecmisi:"]
-            for msg in self.history[-MAX_HISTORY * 2:]:
-                role = "Kullanici" if msg["role"] == "user" else "Asistan"
-                history_lines.append(f"{role}: {msg['content']}")
-            prompt = "\n".join(history_lines) + "\nAsistan:"
-            response = self.gemini_model.generate_content(prompt)
-            if not response or not getattr(response, "text", "").strip():
-                raise RuntimeError("Gemini bos yanit dondurdu.")
-            return response.text.strip()
-
-        raise RuntimeError("Desteklenmeyen provider.")
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history
+        response = ollama.chat(
+            model=OLLAMA_MODEL,
+            messages=messages,
+        )
+        content = response.get("message", {}).get("content", "").strip()
+        if not content:
+            raise RuntimeError("Ollama bos yanit dondurdu.")
+        return content
 
     def _execute_skill(self, json_str: str, original_text: str):
         try:
@@ -191,23 +167,24 @@ class TrissAssistant:
             speak("Bu komutu henuz ogrenemedim!")
 
     def _transcribe(self, audio) -> str:
+        # Hem wake word (uyandirma) hem de aktif konusma icin yerel Whisper kullanilir
         try:
-            if not self.active:
-                return self.recognizer.recognize_google(audio, language="tr-TR")
-            else:
-                import whisper
-                import numpy as np
-                import io, soundfile as sf
+            import whisper
+            import numpy as np
+            import io, soundfile as sf
 
-                raw = audio.get_wav_data()
-                data, samplerate = sf.read(io.BytesIO(raw))
-                if data.ndim > 1:
-                    data = data[:, 0]
-                data = data.astype(np.float32)
-                model = _get_whisper_model()
-                result = model.transcribe(data, language="tr",
-                    initial_prompt="Triss adli sesli asistan.")
-                return result["text"].strip()
+            raw = audio.get_wav_data()
+            data, samplerate = sf.read(io.BytesIO(raw))
+            if data.ndim > 1:
+                data = data[:, 0]
+            data = data.astype(np.float32)
+            model = _get_whisper_model()
+            result = model.transcribe(
+                data,
+                language="tr",
+                initial_prompt="Triss adli sesli asistan.",
+            )
+            return result["text"].strip()
 
         except sr.UnknownValueError:
             return ""
